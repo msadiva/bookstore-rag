@@ -4,228 +4,112 @@ from crewai import LLM
 from crewai.flow.flow import Flow, start, listen, router, or_
 from pydantic import BaseModel
 
-from .events import RetrieveEvent, EvaluateEvent, WebSearchEvent, SynthesizeEvent
-from src.tools.firecrawl_search_tool import FirecrawlSearchTool
-from src.retrieval.retriever import Retriever
-from src.generation.rag import RAG
+from .events import RetrieveEvent, RouterOutput, QueryEvent, RagEvent
+from src.retrieval import Retriever
+from src.rag import RAG
 from config.settings import settings
 
 # Prompt templates for workflow steps
-ROUTER_EVALUATION_TEMPLATE = (
-    """You are a quality evaluator for RAG responses. Your task is to determine if the given response adequately answers the user's question.
+ROUTER_FILTER_PROMPT = """
+You are a routing assistant that classifies user queries in a book search system. 
+Your job is to (1) identify filters and (2) determine if the query is SEMANTIC or ANALYTICAL.
 
-USER QUESTION:
+Definitions:
+- SEMANTIC → The user wants to retrieve or explore books based on meaning, relevance, or similarity 
+  (e.g., "Find me romance novels by Jane Austen", "Books similar to Pride and Prejudice").
+- ANALYTICAL → The user wants to compute or analyze something using structured data 
+  (e.g., "What is the average rating of romance books after 2010?", "How many books did J.K. Rowling publish after 2005?").
+
+Possible book_category values: "romance", "comic", or null.
+
+Respond ONLY in the following JSON format, filling null if not applicable: 
+
+{schema}
+
+
+USER QUERY:
 {query}
 
-RESPONSE:
-{rag_response}
+JSON RESPONSE:
+"""
 
-Please evaluate the response quality and respond with either:
-- "GOOD" - if the response adequately answers the question
-- "BAD" - if the response is incomplete, unclear, or doesn't answer the question
-
-IMPORTANT: Respond with ONLY ONE WORD in UPPERCASE: GOOD or BAD. No punctuation or extra text.
-
-Your evaluation (GOOD or BAD):"""
-)
-
-QUERY_OPTIMIZATION_TEMPLATE = (
-    """Optimize the following query for web search to get the most relevant and accurate results.
-
-Original Query: {query}
-
-Guidelines:
-- Make the query more specific and searchable
-- Add relevant keywords that would help find authoritative sources
-- Keep it concise but comprehensive
-- Focus on the core information need
-
-Optimized Query:"""
-)
-
-SYNTHESIS_TEMPLATE = (
-    """You are a response synthesizer. Create a comprehensive and accurate answer based on the available information.
-
-USER QUESTION:
-{query}
-
-RAG RESPONSE (from document knowledge):
-{rag_response}
-
-WEB SEARCH RESULTS (additional context):
-{web_results}
-
-INSTRUCTIONS:
-- Synthesize information from both sources to provide the most complete answer
-- Prioritize information from reliable sources
-- If there are contradictions, acknowledge them
-- Clearly indicate when information comes from web search vs document knowledge
-- If web results are empty, refine and improve the RAG response
-
-SYNTHESIZED RESPONSE:"""
-)
 
 # Define flow state
-class ParalegalAgentState(BaseModel):
+class BookStoreAgent(BaseModel):
     query: str = ""
-    top_k: Optional[int] = 3
 
-class ParalegalAgentWorkflow(Flow[ParalegalAgentState]):
-    """Paralegal Agent Workflow with router and web search fallback using CrewAI Flows."""
+class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
+    """Book Store Agent Workflow"""
 
     def __init__(
         self,
         retriever: Retriever,
         rag_system: RAG,
-        firecrawl_api_key: Optional[str] = None,
         **kwargs: Any,
     ):
         super().__init__(**kwargs)
         self.retriever = retriever
         self.rag = rag_system
 
-        # Initialize Ollama LLM for workflow operations
+        # Initialize OpenAI LLM for workflow operations
         self.llm = LLM(
-            model=f"ollama/{settings.llm_model}",
-            base_url=settings.ollama_base_url,
+            model=f"openai/{settings.llm_model}",
             temperature=0.1
         )
-
+    def call_with_schema(self, prompt: str, schema: type[BaseModel]) -> BaseModel:
+        """Utility to call LLM with enforced schema"""
+        return self.llm.call(prompt=prompt, expected_output=schema)
+    
     @start()
-    def retrieve(self) -> RetrieveEvent:
-        """Retrieve relevant documents from vector database"""
+    def receive_query(self) -> QueryEvent:
         query = self.state.query
-        top_k = self.state.top_k
-
         if not query:
             raise ValueError("Query is required")
+        return QueryEvent(query=query)
 
-        logger.info(f"Retrieving documents for query: {query}")
+    
 
-        retrieved_nodes = self.retriever.search(query, top_k=top_k)
-        logger.info(f"Retrieved {len(retrieved_nodes)} documents")
-        return RetrieveEvent(retrieved_nodes=retrieved_nodes, query=query)
+    @router(receive_query)
+    def route_query(self, ev: QueryEvent) -> str:
+        """Route Query"""
 
-    @listen(retrieve)
-    def generate_rag_response(self, ev: RetrieveEvent) -> EvaluateEvent:
-        """Generate initial RAG response"""
-        query = ev.query
-        retrieved_nodes = ev.retrieved_nodes
-
-        logger.info("Generating RAG response")
-
-        rag_response = self.rag.query(query)
-
-        logger.info("RAG response generated")
-        return EvaluateEvent(
-            rag_response=rag_response,
-            retrieved_nodes=retrieved_nodes,
-            query=query
+        routing_prompt = ROUTER_FILTER_PROMPT.format(
+            query=ev.query,
+            schema=RouterOutput.schema_json(indent=2)  # Pydantic schema JSON
         )
 
-    @router(generate_rag_response)
-    def evaluate_response(self, ev: EvaluateEvent) -> str:
-        """Evaluate RAG response quality and route accordingly"""
-        rag_response = ev.rag_response
-        query = ev.query
-        
-        logger.info("Evaluating RAG response quality")
+        routing_result = self.call_with_schema(routing_prompt, RouterOutput)
 
-        evaluation_prompt = ROUTER_EVALUATION_TEMPLATE.format(query=query, rag_response=rag_response)
-        resp_text = self.llm.call(evaluation_prompt)
-        evaluation = (resp_text or "").strip().upper().split()[0]
+        logger.info(f"Routing decision: {routing_result.query_type}, Filters: {routing_result.filters}")
+        
+        self.state.filters = routing_result.filters        
 
-        logger.info(f"Evaluation result: {evaluation}")
-        return "synthesize" if "GOOD" in evaluation else "web_search"
+        return "rag_flow" if routing_result.query_type.lower() == "semantic" else "non_semantic_flow"
+    
+    @listen("rag_flow")
+    def run_rag_pipeline(self, ev: QueryEvent) -> RagEvent:
+        """Execute RAG pipeline if query is semantic"""
+        logger.info(f"Running RAG pipeline for query: {ev.query}")
 
-    @listen("web_search")
-    def perform_web_search(self, ev: EvaluateEvent | WebSearchEvent) -> SynthesizeEvent:
-        """Perform web search if insufficient information from RAG response"""
-        query = ev.query
-        rag_response = ev.rag_response
-        retrieved_nodes = getattr(ev, "retrieved_nodes", [])
+        filters = getattr(self.state, "filters", None)
         
-        logger.info("Performing web search")
-        
-        search_results = ""
-        try:
-            optimization_prompt = QUERY_OPTIMIZATION_TEMPLATE.format(query=query)
-            optimized_query = (self.llm.call(optimization_prompt) or query).strip()
-            search_results = FirecrawlSearchTool().run(query=optimized_query, limit=3)
-            logger.info("Web search completed via custom tool")
-        except Exception as e:
-            logger.error(f"Web search failed: {e}")
-            search_results = "Web search unavailable due to technical issues."
-        
-        return SynthesizeEvent(
-            rag_response=rag_response,
-            web_search_results=search_results,
-            retrieved_nodes=retrieved_nodes,
-            query=query,
-            use_web_results=True
-        )
+        rag_context = self.retriever.search(ev.query, filters=filters.dict() if filters else None)
+        rag_answer = self.rag.query(ev.query, filters=filters.dict() if filters else None)
 
-    @listen(or_("synthesize", "perform_web_search"))
-    def synthesize_response(self, ev: EvaluateEvent | SynthesizeEvent) -> dict:
-        """Synthesize final response from RAG and web search results"""
-        rag_response = ev.rag_response
-        web_results = getattr(ev, "web_search_results", "") or ""
-        query = ev.query
-        use_web_results = getattr(ev, "use_web_results", False)
-        
-        logger.info("Synthesizing final response")
-        
-        if use_web_results and web_results:
-            synthesis_prompt = SYNTHESIS_TEMPLATE.format(
-                query=query, rag_response=rag_response, web_results=web_results
-            )
-            synthesized_answer = self.llm.call(synthesis_prompt)
-            result = {
-                "answer": synthesized_answer,
-                "rag_response": rag_response,
-                "web_search_used": True,
-                "web_results": web_results,
-                "query": query,
-            }
-        else:
-            refinement_prompt = (
-                f"Improve and refine the following response to make it more helpful and comprehensive:\n\n"
-                f"Original Response: {rag_response}\n\nRefined Response:"
-            )
-            refined = self.llm.call(refinement_prompt)
-            result = {
-                "answer": refined,
-                "rag_response": rag_response,
-                "web_search_used": False,
-                "web_results": None,
-                "query": query,
-            }
-        
-        logger.info("Final response synthesized")
-        return result
-
-    async def run_workflow(self, query: str, top_k: Optional[int] = None) -> dict:
+        return RagEvent(query=ev.query, rag_context=str(rag_context), answer=rag_answer)
+    
+    async def run_workflow(self, query: str) -> dict:
         """
-        Run the complete flow for a given query.
-        
-        Args:
-            query: User question
-            top_k: Number of documents to retrieve
-            
-        Returns:
-            Dictionary with final answer and metadata
+        Run the semantic RAG workflow for a given query.
         """
         try:
-            # Kick off the CrewAI flow asynchronously with runtime inputs
-            result = await self.kickoff_async(inputs={"query": query, "top_k": top_k})
+            result = await self.kickoff_async(inputs={"query": query})
             return result if isinstance(result, dict) else {"answer": str(result), "query": query}
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
             return {
-                "answer": f"I apologize, but I encountered an error while processing your question: {str(e)}",
+                "answer": f"Error while processing: {str(e)}",
                 "rag_response": None,
-                "web_search_used": False,
-                "web_results": None,
                 "query": query,
                 "error": str(e)
             }

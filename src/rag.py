@@ -2,7 +2,7 @@ from typing import Optional
 from loguru import logger
 from crewai import LLM
 from pydantic import BaseModel
-from retrieval.retriever import Retriever
+from .retrieval import Retriever
 from config.settings import settings
 
 class ChatMessage(BaseModel):

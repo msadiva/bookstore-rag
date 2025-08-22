@@ -2,7 +2,7 @@ from loguru import logger
 from typing import List, Dict, Any
 from pymilvus import MilvusClient, DataType, connections, FieldSchema, CollectionSchema, Collection
 from config.settings import settings
-from embed_data import EmbedData, batch_iterate
+from .embed_data import EmbedData, batch_iterate
 
 
 class MilvusDB :
