@@ -9,6 +9,8 @@ class Settings(BaseSettings) :
 
     llm_model_key: str = os.environ.get("LLM_Model_Key")
 
+    llm_model: str = os.environ.get("LLM_Model")
+
     embedding_model: str = os.environ.get("Embedding_Model")
 
     vector_dim: int = os.environ.get("Embedding_Vector_Dim")

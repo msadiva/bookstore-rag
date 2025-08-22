@@ -110,7 +110,7 @@ class MilvusDB :
             anns_field="binary_vector",
             param={"metric_type": "HAMMING", "params": {}},
             limit=top_k,
-            output_fields=["book_id","type","title","author","description","avg_rating"],
+            output_fields=["book_id","type","title","author","description","avg_rating", "pub_year"],
             expr=self._build_filter_expression(filters)
         )
         formatted = []
@@ -123,6 +123,7 @@ class MilvusDB :
                 "description": result.entity.get("description"),
                 "book_category": result.entity.get("book_category"),
                 "avg_rating": result.entity.get("avg_rating"),
+                "pub_year" : result.entity.get("pub_year"),
                 "score": result.score
             })
         return formatted
@@ -131,12 +132,20 @@ class MilvusDB :
         """Convert dict filters into Milvus expression string."""
         if not filters:
             return ""
+
         clauses = []
-        for k, v in filters.items():
-            if isinstance(v, str):
-                clauses.append(f'{k} == "{v}"')
-            else:
-                clauses.append(f"{k} == {v}")
+
+        if "author" in filters:
+            clauses.append(f'author == "{filters["author"]}"')
+        if "book_category" in filters:
+            clauses.append(f'book_category == "{filters["book_category"]}"')
+        if "publication_year_min" in filters:
+            clauses.append(f"pub_year >= {filters['publication_year_min']}")
+        if "publication_year_max" in filters:
+            clauses.append(f"pub_year <= {filters['publication_year_max']}")
+        if "min_rating" in filters:
+            clauses.append(f"avg_rating >= {filters['min_rating']}")
+
         return " and ".join(clauses)
 
     def get_collection_info(self):
