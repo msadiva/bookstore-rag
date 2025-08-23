@@ -114,7 +114,18 @@ class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
         """
         try:
             result = await self.kickoff_async(inputs={"query": query})
-            return result if isinstance(result, dict) else {"answer": str(result), "query": query}
+            
+            # If result is a RagEvent object, extract the answer
+            if hasattr(result, 'answer'):
+                return {
+                    "answer": result.answer,
+                    "query": result.query if hasattr(result, 'query') else query,
+                    "rag_context": result.rag_context if hasattr(result, 'rag_context') else None
+                }
+            elif isinstance(result, dict):
+                return result
+            else:
+                return {"answer": str(result), "query": query}
         except Exception as e:
             logger.error(f"Workflow execution failed: {e}")
             return {

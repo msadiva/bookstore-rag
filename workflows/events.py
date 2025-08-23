@@ -4,6 +4,7 @@ from src.retrieval import NodeWithScore
 
 class FilterSchema(BaseModel):
     author: Optional[str] = None
+    title: Optional[str] = None
     book_category: Optional[Literal["romance", "comic"]] = None  # restricted values
     publication_year_min: Optional[int] = None
     publication_year_max: Optional[int] = None

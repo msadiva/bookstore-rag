@@ -27,11 +27,20 @@ class MilvusDB :
 
         self.client = None 
 
+        self.collection = None
+
 
     def initialize_client(self) :
         """Connect to Milvus Standalone"""
 
         connections.connect(alias = "default", host = self.host, port = self.port)
+
+        if utility.has_collection(self.collection_name):
+            print(f"✅ Found existing collection: {self.collection_name}")
+            self.collection = Collection(self.collection_name)  # Load collection
+            self.collection.load()
+        else:
+            print(f"⚠️ No collection found: {self.collection_name}. You need to create it first.")
 
         logger.info("Suucessfully connected to Milvus Vector DB")
 
@@ -113,28 +122,36 @@ class MilvusDB :
         if not self.collection:
             raise RuntimeError("Collection not initialized. Call create_collection() first.")
 
+        print (f"Query Vector = {query_vector}")
+        filter_expr = self._build_filter_expression(filters)
+        print (f"Filters generated = {filter_expr}")
         search_results = self.collection.search(
             data=[query_vector],
             anns_field="vector",
             param={"metric_type": "HAMMING", "params": {}},
             limit=top_k,
-            output_fields=["book_id","title","author","description","average_rating", "publication_year"],
-            expr=self._build_filter_expression(filters)
+            output_fields=["book_id","title","author","description","average_rating", "publication_year", "context"],
+            expr=filter_expr
         )
+        print (f"Search Results = {search_results}")
         formatted_results = []
         for result in search_results[0]:
+            entity = result["entity"]  # extract the dict from the search result
             formatted_results.append({
-            "id": result.id,
-            "score": result.score,
-            "payload": {
-                "context": result.get("context") or "",
-                "title": result.get("title") or "",
-                "author": result.get("author") or "",
-                "book_category": result.get("book_category") or "",
-                "avg_rating": result.get("average_rating"),
-                "pub_year": result.get("publication_year"),
-            }
-        })
+                "id": result["id"],
+                "score": result["distance"],  # or `result["score"]` if available
+                "payload": {
+                    "context": (
+                        f"Title: {entity.get('title', '')}\n"
+                        f"Author: {entity.get('author', '')}\n"
+                        f"Category: {entity.get('book_category', '')}\n"
+                        f"Description: {entity.get('description', '')}\n"
+                        f"Review: {entity.get('review_text', '')}\n"
+                        f"Average Rating: {entity.get('average_rating', '')}\n"
+                        f"Publication Year: {entity.get('publication_year', '')}"
+                    )
+                }
+            })
         return formatted_results
 
     def _build_filter_expression(self, filters: Dict[str, Any]) -> str:
@@ -143,10 +160,13 @@ class MilvusDB :
 
         expr_parts = []
 
-        if filters.get("author"):
+        if filters.get("author") is not None:
             expr_parts.append(f'author == "{filters["author"]}"')
 
-        if filters.get("book_category"):
+        if filters.get("title") is not None:
+            expr_parts.append(f'title == "{filters["title"]}"')
+
+        if filters.get("book_category") is not None :
             expr_parts.append(f'book_category == "{filters["book_category"]}"')
 
         if filters.get("publication_year_min") is not None:
