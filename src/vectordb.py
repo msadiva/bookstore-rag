@@ -1,6 +1,6 @@
 from loguru import logger
 from typing import List, Dict, Any
-from pymilvus import MilvusClient, DataType, connections, FieldSchema, CollectionSchema, Collection
+from pymilvus import MilvusClient, DataType, connections, FieldSchema, CollectionSchema, Collection, utility
 from config.settings import settings
 from .embed_data import EmbedData, batch_iterate
 
@@ -28,35 +28,43 @@ class MilvusDB :
         self.client = None 
 
 
-    def initilize_client(self) :
+    def initialize_client(self) :
         """Connect to Milvus Standalone"""
 
         connections.connect(alias = "default", host = self.host, port = self.port)
+
+        logger.info("Suucessfully connected to Milvus Vector DB")
 
     def create_collection(self):
         """Create collection with metadata for books and reviews."""
         fields = [
             FieldSchema("id", DataType.INT64, is_primary=True, auto_id=True),
-            FieldSchema("book_id", DataType.VARCHAR, max_length=64),
-            FieldSchema("type", DataType.VARCHAR, max_length=20),  # 'book' or 'review'
-            FieldSchema("book_category", DataType.VARCHAR, max_length = 20), ## either romance or comic graphics
-            FieldSchema("context", DataType.VARCHAR, max_length=65535),  # title+desc or review
+            FieldSchema("book_id", DataType.VARCHAR, max_length=64, nullable=True),
+            FieldSchema("book_category", DataType.VARCHAR, max_length = 20, nullable=True, default_value = "romance"), ## either romance or comic graphics
+            FieldSchema("context", DataType.VARCHAR, max_length=65535, nullable=True),  # title+desc or review
             FieldSchema("vector", DataType.BINARY_VECTOR, dim=self.vector_dim),
-            FieldSchema("title", DataType.VARCHAR, max_length=512),
-            FieldSchema("author", DataType.VARCHAR, max_length=256),
-            FieldSchema("description", DataType.VARCHAR, max_length=65535),
-            FieldSchema("avg_rating", DataType.FLOAT),
-            FieldSchema("num_pages", DataType.INT64),
-            FieldSchema("pub_year", DataType.INT64),
+            FieldSchema("title", DataType.VARCHAR, max_length=512, nullable=True),
+            FieldSchema("author", DataType.VARCHAR, max_length=256, nullable=True),
+            FieldSchema("description", DataType.VARCHAR, max_length=65535, nullable=True),
+            FieldSchema("average_rating", DataType.FLOAT, nullable=True),
+            FieldSchema("num_pages", DataType.INT64, nullable=True),
+            FieldSchema("publication_year", DataType.INT64, nullable=True),
+            FieldSchema("publisher", DataType.VARCHAR, max_length = 64, nullable=True),
+            FieldSchema("price", DataType.FLOAT, nullable=True)
         ]
         schema = CollectionSchema(fields, description="Books and Reviews Collection")
 
         # Drop existing collection if exists
-        if Collection.exists(self.collection_name):
-            Collection(self.collection_name).drop()
-            logger.info(f"Dropped existing collection: {self.collection_name}")
+        # Drop existing collection if exists
+        if utility.has_collection(self.collection_name):
+            logger.info(f"Collection {self.collection_name} already exists")
+            utility.drop_collection(self.collection_name)
+            logger.info("Dropped the previous collection")
+            self.collection = Collection(name=self.collection_name, schema=schema)
+        else:
+            # create collection
+            self.collection = Collection(name=self.collection_name, schema=schema)
 
-        self.collection = Collection(name=self.collection_name, schema=schema)
         logger.info(f"Created collection '{self.collection_name}'")
 
         # Create index for fast search
@@ -77,7 +85,7 @@ class MilvusDB :
         total_inserted = 0
         for batch_context, batch_vectors, batch_meta in zip(
             batch_iterate(embed_data.contexts, self.batch_size),
-            batch_iterate(embed_data.embeddings, self.batch_size),
+            batch_iterate(embed_data.binary_embeddings, self.batch_size),
             batch_iterate(metadata, self.batch_size)
         ):
             data_batch = []
@@ -97,7 +105,7 @@ class MilvusDB :
 
     def search(
         self,
-        query_vector: List[float],
+        query_vector: bytes,
         top_k: int = 5,
         filters: Dict[str, Any] = None
     ):
@@ -107,46 +115,51 @@ class MilvusDB :
 
         search_results = self.collection.search(
             data=[query_vector],
-            anns_field="binary_vector",
+            anns_field="vector",
             param={"metric_type": "HAMMING", "params": {}},
             limit=top_k,
-            output_fields=["book_id","type","title","author","description","avg_rating", "pub_year"],
+            output_fields=["book_id","title","author","description","average_rating", "publication_year"],
             expr=self._build_filter_expression(filters)
         )
-        formatted = []
+        formatted_results = []
         for result in search_results[0]:
-            formatted.append({
-                "book_id": result.entity.get("book_id"),
-                "type": result.entity.get("type"),
-                "title": result.entity.get("title"),
-                "author": result.entity.get("author"),
-                "description": result.entity.get("description"),
-                "book_category": result.entity.get("book_category"),
-                "avg_rating": result.entity.get("avg_rating"),
-                "pub_year" : result.entity.get("pub_year"),
-                "score": result.score
-            })
-        return formatted
+            formatted_results.append({
+            "id": result.id,
+            "score": result.score,
+            "payload": {
+                "context": result.get("context") or "",
+                "title": result.get("title") or "",
+                "author": result.get("author") or "",
+                "book_category": result.get("book_category") or "",
+                "avg_rating": result.get("average_rating"),
+                "pub_year": result.get("publication_year"),
+            }
+        })
+        return formatted_results
 
     def _build_filter_expression(self, filters: Dict[str, Any]) -> str:
-        """Convert dict filters into Milvus expression string."""
         if not filters:
             return ""
 
-        clauses = []
+        expr_parts = []
 
-        if "author" in filters:
-            clauses.append(f'author == "{filters["author"]}"')
-        if "book_category" in filters:
-            clauses.append(f'book_category == "{filters["book_category"]}"')
-        if "publication_year_min" in filters:
-            clauses.append(f"pub_year >= {filters['publication_year_min']}")
-        if "publication_year_max" in filters:
-            clauses.append(f"pub_year <= {filters['publication_year_max']}")
-        if "min_rating" in filters:
-            clauses.append(f"avg_rating >= {filters['min_rating']}")
+        if filters.get("author"):
+            expr_parts.append(f'author == "{filters["author"]}"')
 
-        return " and ".join(clauses)
+        if filters.get("book_category"):
+            expr_parts.append(f'book_category == "{filters["book_category"]}"')
+
+        if filters.get("publication_year_min") is not None:
+            expr_parts.append(f"publication_year >= {filters['publication_year_min']}")
+
+        if filters.get("publication_year_max") is not None:
+            expr_parts.append(f"publication_year <= {filters['publication_year_max']}")
+
+        if filters.get("min_rating") is not None:
+            expr_parts.append(f"average_rating >= {filters['min_rating']}")
+
+        return " and ".join(expr_parts) if expr_parts else ""
+
 
     def get_collection_info(self):
         if not self.collection:

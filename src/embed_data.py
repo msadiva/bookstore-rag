@@ -57,7 +57,7 @@ class EmbedData:
     def embed(self, contexts: List[str]):
         self.contexts = contexts
         logger.info(f"Generating embeddings for {len(contexts)} contexts...")
-
+        count = 0
         for batch_context in batch_iterate(contexts, self.batch_size):
             # Generate float32 embeddings
             batch_embeddings = self.generate_embedding(batch_context)
@@ -66,6 +66,8 @@ class EmbedData:
             # Convert to binary and store
             binary_batch = self._binary_quantize(batch_embeddings)
             self.binary_embeddings.extend(binary_batch)
+            count += self.batch_size
+            logger.info(f"Total Embeddings Generated = {count}")
 
         logger.info(f"Generated {len(self.embeddings)} embeddings with binary quantization")
 

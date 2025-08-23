@@ -36,7 +36,7 @@ class Retriever:
 
         # Perform vector search
         search_results = self.vector_db.search(
-            binary_query=binary_query,
+            query_vector=binary_query,
             top_k=top_k,
             filters=filters
         )
@@ -57,13 +57,13 @@ class Retriever:
         # logger.info(f"Retrieved {len(nodes_with_scores)} results for query")
         return nodes_with_scores
 
-    def get_contexts(self, query: str, top_k: Optional[int] = None):
-        nodes_with_scores = self.search(query, top_k)
+    def get_contexts(self, query: str, top_k: Optional[int] = None, filters: Optional[Dict] = None):
+        nodes_with_scores = self.search(query, top_k, filters=filters)
         return [node.node.text for node in nodes_with_scores]
 
-    def get_combined_context(self, query: str, top_k: Optional[int] = None):
-        contexts = self.get_contexts(query, top_k)
-        return "\n\n---\n\n".join(contexts)
+    def get_combined_context(self, query: str, top_k: Optional[int] = None, filters: Optional[Dict] = None):
+        nodes_with_scores = self.search(query, top_k, filters=filters)
+        return [node.node.text for node in nodes_with_scores if getattr(node.node, "text", None)]
 
     def search_with_scores(self, query: str, top_k: Optional[int] = None):
         nodes_with_scores = self.search(query, top_k)

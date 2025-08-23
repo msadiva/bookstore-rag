@@ -20,7 +20,7 @@ class RAG:
         self.retriever = retriever
         self.llm_model = llm_model or settings.llm_model
         self.temperature = temperature or settings.temperature
-        self.max_tokens = max_tokens or settings.max_tokens
+        # self.max_tokens = max_tokens or settings.max_tokens
         
         # Initialize LLM
         self.llm = self._setup_llm()
@@ -48,6 +48,7 @@ class RAG:
     def _setup_llm(self):
         llm = LLM(
             model=f"openai/{self.llm_model}",
+            api_key=settings.llm_model_key,
             temperature=self.temperature
         )
         logger.info(f"Initialized LLM with OpenAI model: {self.llm_model}")
@@ -57,9 +58,10 @@ class RAG:
         # Generate context from retrieval results
         return self.retriever.get_combined_context(query, top_k)
 
-    def query(self, query: str, top_k: Optional[int] = None):
+    def query(self, query: str, top_k: Optional[int] = None, context: Optional[str] = None):
         # Generate context from retrieval
-        context = self.generate_context(query, top_k)
+        if context is None:
+            context = self.generate_context(query, top_k)
         
         # Create prompt from template
         prompt = self.prompt_template.format(context=context, query=query)

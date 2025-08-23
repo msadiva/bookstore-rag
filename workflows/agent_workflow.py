@@ -1,4 +1,4 @@
-from typing import Optional, Any
+from typing import Optional, Any, Dict
 from loguru import logger
 from crewai import LLM
 from crewai.flow.flow import Flow, start, listen, router, or_
@@ -8,6 +8,7 @@ from .events import RetrieveEvent, RouterOutput, QueryEvent, RagEvent
 from src.retrieval import Retriever
 from src.rag import RAG
 from config.settings import settings
+import json
 
 # Prompt templates for workflow steps
 ROUTER_FILTER_PROMPT = """
@@ -37,6 +38,7 @@ JSON RESPONSE:
 # Define flow state
 class BookStoreAgent(BaseModel):
     query: str = ""
+    filters: Optional[Dict[str, Any]] = None
 
 class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
     """Book Store Agent Workflow"""
@@ -54,11 +56,13 @@ class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
         # Initialize OpenAI LLM for workflow operations
         self.llm = LLM(
             model=f"openai/{settings.llm_model}",
+            api_key=settings.llm_model_key,
             temperature=0.1
         )
     def call_with_schema(self, prompt: str, schema: type[BaseModel]) -> BaseModel:
         """Utility to call LLM with enforced schema"""
-        return self.llm.call(prompt=prompt, expected_output=schema)
+        self.llm.response_format = schema
+        return self.llm.call(prompt)
     
     @start()
     def receive_query(self) -> QueryEvent:
@@ -78,9 +82,15 @@ class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
             schema=RouterOutput.schema_json(indent=2)  # Pydantic schema JSON
         )
 
+        logger.info("Calling Router Agent")
+
         routing_result = self.call_with_schema(routing_prompt, RouterOutput)
 
-        logger.info(f"Routing decision: {routing_result.query_type}, Filters: {routing_result.filters}")
+        if isinstance(routing_result, str):
+            routing_result = RouterOutput.parse_obj(json.loads(routing_result))
+        
+        logger.info("Raw routing_result:", routing_result)
+        logger.info(f"Routing decision: {routing_result.query_type}")
         
         self.state.filters = routing_result.filters        
 
@@ -93,8 +103,8 @@ class BookStoreAgentWorkflow(Flow[BookStoreAgent]):
 
         filters = getattr(self.state, "filters", None)
         
-        rag_context = self.retriever.search(ev.query, filters=filters.dict() if filters else None)
-        rag_answer = self.rag.query(ev.query, filters=filters.dict() if filters else None)
+        rag_context = self.retriever.get_combined_context(ev.query, filters=filters.dict() if filters else None)
+        rag_answer = self.rag.query(query=ev.query, context=rag_context)
 
         return RagEvent(query=ev.query, rag_context=str(rag_context), answer=rag_answer)
     

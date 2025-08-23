@@ -20,7 +20,7 @@ class Settings(BaseSettings) :
     port: int = os.environ.get("PORT")
 
     top_k: int = 30
-    batch_size: int = 512
+    batch_size: int = 64
     rerank_top_k: int = 10
     
     # Database Configuration
