@@ -9,6 +9,8 @@ class FilterSchema(BaseModel):
     publication_year_min: Optional[int] = None
     publication_year_max: Optional[int] = None
     min_rating: Optional[float] = None
+    min_price: Optional[float] = None
+    max_price: Optional[float] = None
 
 class RouterOutput(BaseModel):
     query_type: Literal["semantic", "analytical"]
@@ -26,3 +28,16 @@ class RagEvent(BaseModel):
     query: str
     rag_context: str
     answer: str
+
+class SQLQuery(BaseModel):
+    """Structured SQL query output from LLM."""
+    sql: str
+    explanation: str
+    confidence: float
+
+class AnalyticalEvent(BaseModel):
+    """Event containing analytical query results."""
+    query: str
+    sql_query: SQLQuery
+    raw_results: str
+    formatted_answer: str

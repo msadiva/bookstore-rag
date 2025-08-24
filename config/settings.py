@@ -26,6 +26,7 @@ class Settings(BaseSettings) :
     # Database Configuration
     milvus_db_path: str = "/data/milvus_binary.db"
     collection_name: str = "bookstore_agent"
+    analytical_db_path: str = "data/books.duckdb"
     
     # Data Configuration
     docs_path: str = "data/"

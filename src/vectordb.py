@@ -54,12 +54,11 @@ class MilvusDB :
             FieldSchema("vector", DataType.BINARY_VECTOR, dim=self.vector_dim),
             FieldSchema("title", DataType.VARCHAR, max_length=512, nullable=True),
             FieldSchema("author", DataType.VARCHAR, max_length=256, nullable=True),
-            FieldSchema("description", DataType.VARCHAR, max_length=65535, nullable=True),
             FieldSchema("average_rating", DataType.FLOAT, nullable=True),
             FieldSchema("num_pages", DataType.INT64, nullable=True),
             FieldSchema("publication_year", DataType.INT64, nullable=True),
             FieldSchema("publisher", DataType.VARCHAR, max_length = 64, nullable=True),
-            FieldSchema("price", DataType.FLOAT, nullable=True)
+            FieldSchema("price", DataType.FLOAT, nullable=True),
         ]
         schema = CollectionSchema(fields, description="Books and Reviews Collection")
 
@@ -130,7 +129,7 @@ class MilvusDB :
             anns_field="vector",
             param={"metric_type": "HAMMING", "params": {}},
             limit=top_k,
-            output_fields=["book_id","title","author","description","average_rating", "publication_year", "context"],
+            output_fields=["book_id","title","author","average_rating", "publication_year", "context", "price", "book_category"],
             expr=filter_expr
         )
         print (f"Search Results = {search_results}")
@@ -144,11 +143,11 @@ class MilvusDB :
                     "context": (
                         f"Title: {entity.get('title', '')}\n"
                         f"Author: {entity.get('author', '')}\n"
+                        f"Price: {entity.get('price', '')}\n"
                         f"Category: {entity.get('book_category', '')}\n"
-                        f"Description: {entity.get('description', '')}\n"
-                        f"Review: {entity.get('review_text', '')}\n"
                         f"Average Rating: {entity.get('average_rating', '')}\n"
-                        f"Publication Year: {entity.get('publication_year', '')}"
+                        f"Publication Year: {entity.get('publication_year', '')}\n\n"
+                        f"Content: {entity.get('context', '')}"
                     )
                 }
             })
@@ -177,6 +176,12 @@ class MilvusDB :
 
         if filters.get("min_rating") is not None:
             expr_parts.append(f"average_rating >= {filters['min_rating']}")
+
+        if filters.get("min_price") is not None :
+            expr_parts.append(f"price >= {filters['min_price']}")
+        
+        if filters.get("max_price") is not None :
+            expr_parts.append(f"price <= {filters['max_price']}")
 
         return " and ".join(expr_parts) if expr_parts else ""
 
