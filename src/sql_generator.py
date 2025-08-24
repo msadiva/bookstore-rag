@@ -64,24 +64,18 @@ Respond with:
                 for col_name, col_type in self.schema_info.get("columns", {}).items()
             ])
             
-            # Simplified prompt without structured output
-            simple_prompt = f"""
-Convert this natural language query to SQL using the books table:
-
-Columns: {', '.join(self.schema_info.get('columns', {}).keys())}
-
-Query: {user_query}
-
-Return only the SQL query, nothing else.
-Examples:
-- "count of romance books after 2010" → SELECT COUNT(*) FROM books WHERE book_category = 'romance' AND publication_year > 2010
-- "books with rating above 4" → SELECT * FROM books WHERE average_rating > 4
-"""
+            # Create prompt using the template
+            prompt = self.sql_prompt_template.format(
+                table_name=self.schema_info.get("table_name", "books"),
+                column_info=column_info,
+                user_query=user_query,
+                response_format="Return only the SQL query as plain text."
+            )
             
             logger.info(f"Generating SQL for query: {user_query}")
             
-            # Call LLM without structured output
-            response = self.llm.call(simple_prompt)
+            # Call LLM
+            response = self.llm.call(prompt)
             print(f"Raw LLM response: {response}")
             
             # Clean the response to extract SQL
