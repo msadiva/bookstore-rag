@@ -44,11 +44,6 @@ The system contains books from two main categories sourced from Goodreads:
 - **Conversational Interface**: Natural language interaction with context awareness
 - **Real-time Processing**: Live vectorization and embedding of new data
 
-### Technical Features
-- **Multi-modal RAG**: Supports both vector and analytical retrieval methods
-- **Scalable Architecture**: Modular design with separated concerns
-- **Intelligent Caching**: Optimized performance through strategic caching
-- **Async Processing**: Non-blocking operations for better user experience
 
 ## 🛠️ Technology Stack
 
@@ -56,10 +51,10 @@ The system contains books from two main categories sourced from Goodreads:
 - **Vector Database**: Milvus Lite
 - **Analytical Database**: DuckDB
 - **Embeddings**: BGE (BAAI/bge-large-en-v1.5, BAAI/bge-small-en-v1.5)
-- **LLM Integration**: OpenAI GPT models via LiteLLM
+- **LLM Integration**: OpenAI
 - **Workflow Engine**: CrewAI for agent orchestration
 - **Data Processing**: Pandas, NumPy
-- **ML Libraries**: Sentence Transformers, Scikit-learn
+- **ML Libraries**: Sentence Transformers, Scikit-learn, PyTorch
 
 ## 📁 Project Structure
 
@@ -86,9 +81,8 @@ The system contains books from two main categories sourced from Goodreads:
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Python 3.8+
-- Git
-
+- Python 3.13
+- Docker (for Milvus DB)
 ### Installation
 
 1. **Clone the repository**
